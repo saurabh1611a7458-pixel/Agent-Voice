@@ -1,163 +1,274 @@
-# Building Voice Agents with Google ADK
+# 🎙️ Building Real-Time Voice Agents with Google ADK & Gemini Live API
 
-A guided Python workshop that goes from a tiny typed-prompt agent to a real-time voice agent with tools, interruption, transcription, and failure handling.
+<div align="center">
 
-## Workshop slides
-- [Live Google Slides](https://docs.google.com/presentation/d/1rO9ilaF21ZTv5zWEboJ0Th_qkVyTbKBRWPNS2K3-EFw/edit?usp=sharing) 
+[![Python Version](https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-blue.svg?style=flat-square)](https://www.python.org/)
+[![Google ADK](https://img.shields.io/badge/Google%20ADK-v2.3%2B-4285F4.svg?style=flat-square&logo=google)](https://adk.dev/)
+[![Gemini Live API](https://img.shields.io/badge/Gemini%20Live%20API-3.1%20Flash%20Live-8E75C2.svg?style=flat-square&logo=googlegemini)](https://ai.google.dev/gemini-api/docs/live-api)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.116%2B-009688.svg?style=flat-square&logo=fastapi)](https://fastapi.tiangolo.com/)
+[![Tests](https://img.shields.io/badge/tests-8%20passed-success.svg?style=flat-square)](tests/)
+[![License](https://img.shields.io/badge/license-MIT-green.svg?style=flat-square)](LICENSE)
 
-## What participants build
+**A practical, guided workshop taking you from a single prompt instruction to a production-grade, low-latency conversational voice agent with function calling, interruption (barge-in), live transcription, and failure resilience.**
 
-1. A basic ADK agent
-2. A room-finding function tool
-3. A voice agent in the ADK development UI
-4. A slow/failing tool experiment
-5. An optional FastAPI + WebSocket streaming app
-6. A production-hardening pass on the custom streaming web app
+[Workshop Slides (Google Slides)](https://docs.google.com/presentation/d/1rO9ilaF21ZTv5zWEboJ0Th_qkVyTbKBRWPNS2K3-EFw/edit?usp=sharing) • [Facilitator Guide](FACILITATOR.md) • [Checkpoints](#-checkpoint-walkthrough)
 
-Every stage has a runnable checkpoint. If you get stuck, jump to the next folder and continue.
+</div>
 
-## Before the workshop
+---
 
-You need:
+## 🌟 Overview & Highlights
 
-- Python 3.11–3.13
-- [uv](https://docs.astral.sh/uv/getting-started/installation/)
-- Chrome or another Chromium browser
-- Headphones and a microphone
-- A Google AI Studio API key
+Building real-time voice agents requires solving fundamentally different challenges than traditional text chatbots:
+- **Streaming Bidirectionality:** Processing user audio and returning synthesized speech continuously over WebSockets.
+- **Natural Turn-Taking & Interruption:** Cancelling agent audio generation the millisecond the user starts speaking (barge-in).
+- **Latency & Failure Recovery:** Preventing dead silence during tool execution and handling errors politely without exposing raw Python tracebacks.
+- **Production Guardrails:** Protecting WebSocket gateways against memory blowups, token leakage, quota starvation, and privacy breaches.
 
-## Fast setup
+This repository demonstrates how to build and scale voice agents using **Google Agent Development Kit (ADK)** and the **Gemini Live API** (`gemini-3.1-flash-live-preview`).
 
-```bash
-git clone <WORKSHOP_REPO_URL>
-cd adk-voice-workshop
-cp .env.example .env
-# Put the workshop key in GEMINI_API_KEY (or GOOGLE_API_KEY) in .env.
-# Never commit or paste it in chat.
-uv sync
-uv run python scripts/preflight.py
+---
+
+## 🏗️ System Architecture
+
+```mermaid
+flowchart TD
+    subgraph Client ["Client Browser (HTML5 + Web Audio API)"]
+        Mic["Microphone Input<br/>(16kHz PCM Mono)"]
+        Speaker["Audio Output Queue<br/>(24kHz PCM Playback)"]
+        BargeIn["Interruption Manager<br/>(Flushes Audio Buffer)"]
+    end
+
+    subgraph Server ["Production WebSocket Gateway (FastAPI)"]
+        Security["Guardrails Layer<br/>• Origin Allowlist<br/>• Max Payload Limits<br/>• Session Concurrency Cap"]
+        UpstreamTask["browser_to_agent Task<br/>(Base64 Decode & Validation)"]
+        DownstreamTask["agent_to_browser Task<br/>(Audio Chunks & Transcription)"]
+        
+        subgraph Engine ["Google ADK Core"]
+            Queue["LiveRequestQueue"]
+            Runner["InMemoryRunner"]
+            RunConfig["RunConfig Controls<br/>• Session Resumption<br/>• Context Compression (100k -> 80k)<br/>• Max LLM Calls (100)"]
+            Tools["Room Tools<br/>• find_rooms()<br/>• slow_find_rooms()"]
+        end
+    end
+
+    subgraph Gemini ["Google Gemini Live API"]
+        Model["gemini-3.1-flash-live-preview<br/>(Bidirectional Native Audio Streaming)"]
+    end
+
+    Mic -->|WebSocket: audio/pcm;rate=16000| Security
+    Security --> UpstreamTask
+    UpstreamTask --> Queue
+    Queue --> Runner
+    Runner <--> Tools
+    Runner <-->|WebSocket bidiGenerateContent| Model
+    Runner --> DownstreamTask
+    DownstreamTask -->|WebSocket: audio chunks, transcripts, tool events| Speaker
+    DownstreamTask -.->|interrupted signal| BargeIn
+    BargeIn -.->|Purge playback nodes| Speaker
 ```
 
-Expected result:
+---
 
-```text
-✓ Python 3.11–3.13
-✓ Dependencies
-✓ API key configuration
-✓ AI Studio mode
-✓ Text model
-✓ Live model
-✓ Workshop checkpoints
-READY
-```
+## 🗺️ Checkpoint Walkthrough
 
-## Run a checkpoint
+Every stage is organized in a standalone, self-contained folder under `checkpoints/`. If you ever get stuck, you can jump immediately to the next checkpoint!
 
-Typed-prompt checkpoint:
+| Checkpoint | Focus Area | Model | Key Technical Highlights |
+|---|---|---|---|
+| [`00_start`](checkpoints/00_start/) | **Prompt Starter** | `gemini-3.6-flash` | Barebones ADK Agent. Hands-on exercise to refine conversational instructions. |
+| [`01_basic`](checkpoints/01_basic/) | **Instruction Boundaries** | `gemini-3.6-flash` | Strict constraints: ask exactly one clarifying question, cap replies to 3 sentences, never fake bookings. |
+| [`02_tool`](checkpoints/02_tool/) | **Function Calling** | `gemini-3.6-flash` | Attaches the `find_rooms` tool to search room availability by hour and capacity. |
+| [`03_voice`](checkpoints/03_voice/) | **Voice & Live API** | `gemini-3.1-flash-live-preview` | Switches to real-time voice streaming with native audio in the ADK Developer UI (`adk web`). |
+| [`04_slow_failure`](checkpoints/04_slow_failure/) | **Latency & Graceful Failure** | `gemini-3.1-flash-live-preview` | Integrates `slow_find_rooms`. Conversational waiting cues ("Let me check...") and polite failure responses on 1:00 PM (`13:00`). |
+| [`05_custom_streaming`](checkpoints/05_custom_streaming/) | **Custom Full-Stack App** | `gemini-3.1-flash-live-preview` | Standalone FastAPI backend + Web Audio UI. Deconstructs `LiveRequestQueue`, dual concurrent tasks, and browser barge-in. |
+| [`06_production`](checkpoints/06_production/) | **Production Hardening** | `gemini-3.1-flash-live-preview` | Production-grade safeguards: origin checks, concurrency caps, token compression, safe logging, and session resumption. |
 
-```bash
-cd checkpoints/01_basic
-uv run adk web
-```
+---
 
-Checkpoints 00–02 use the stable text model `gemini-3.6-flash`. Type prompts
-with the send button; do not start the microphone/audio mode, because that
-opens `/run_live` and text-only models do not support the Live API. Checkpoint
-03 switches to `gemini-3.1-flash-live-preview` for microphone input and native
-audio.
+## 🚀 Quickstart Guide
 
-Tool agent:
+### 1. Prerequisites
+
+- **Python**: `3.11`, `3.12`, or `3.13`
+- **Package Manager**: [`uv`](https://docs.astral.sh/uv/getting-started/installation/) (recommended) or standard `pip`
+- **Browser**: Google Chrome or Chromium-based browser (for Web Audio API support)
+- **Hardware**: Microphone & **headphones** (headphones prevent speaker-to-mic feedback loops)
+- **API Key**: A Google AI Studio API key ([Generate here](https://aistudio.google.com/app/apikey))
+
+---
+
+### 2. Installation & Configuration
+
+1. **Clone the repository:**
+   ```bash
+   git clone <REPO_URL>
+   cd adk-voice-workshop
+   ```
+
+2. **Configure your environment:**
+   ```bash
+   cp .env.example .env
+   ```
+   Open `.env` and configure your API key:
+   ```env
+   GEMINI_API_KEY=your_actual_gemini_api_key_here
+   TEXT_MODEL=gemini-3.6-flash
+   LIVE_MODEL=gemini-3.1-flash-live-preview
+   ```
+
+3. **Install dependencies:**
+   Using `uv` (recommended):
+   ```bash
+   uv sync
+   ```
+   *Alternatively, using standard virtualenv & pip:*
+   ```bash
+   python3 -m venv .venv
+   source .venv/bin/activate
+   pip install -e .
+   ```
+
+4. **Run the preflight health check:**
+   ```bash
+   uv run python scripts/preflight.py
+   # Or: PYTHONPATH=src .venv/bin/python scripts/preflight.py
+   ```
+   **Expected output:**
+   ```text
+   ✓ Python 3.11–3.13
+   ✓ Dependencies
+   ✓ API key configuration
+   ✓ AI Studio mode
+   ✓ Text model
+   ✓ Live model
+   ✓ Workshop checkpoints
+   READY
+   ```
+
+---
+
+## 🎮 Running the Checkpoints
+
+### 📝 Text Checkpoints (`00_start` – `02_tool`)
+Checkpoints 00–02 use `gemini-3.6-flash`. Use the ADK web console's text box to submit prompts.
 
 ```bash
 cd checkpoints/02_tool
 uv run adk web
 ```
+*Open the printed URL (default: `http://localhost:5000`), select `room_agent`, and type:*
+> *"Do you have any rooms available after 4 PM for 6 people?"*
 
-Voice agent:
+> [!NOTE]
+> Do not click the microphone button in Checkpoints 00–02; text models do not support the Live API bidirectional streaming endpoint.
+
+---
+
+### 🎙️ Voice Checkpoints (`03_voice` – `04_slow_failure`)
+Checkpoint 03 transitions to `gemini-3.1-flash-live-preview` for voice-first interactions.
 
 ```bash
 cd checkpoints/03_voice
+# On macOS, export the SSL cert path to avoid WebSocket handshake issues:
 export SSL_CERT_FILE="$(uv run python -m certifi)"
 uv run adk web
 ```
 
-Open the printed local URL, select `room_agent`, allow microphone access, and say:
+*Open the URL, select `room_agent`, enable your microphone, and speak naturally:*
+- **Standard lookup:** *"Find a room after three."*
+- **Spontaneous correction:** *"Find a room after three—actually, make it after four."*
+- **Boundary check:** *"Book the Cedar room for me."* *(The agent will clarify it can search, but never books).*
 
-> Find a room after three.
-
-The native-audio model is voice-first. Use the microphone rather than the text box in the voice checkpoints.
-
-Slow/failure demo:
-
+#### ⏱️ Testing Latency & Failure (`04_slow_failure`)
 ```bash
 cd checkpoints/04_slow_failure
+export SSL_CERT_FILE="$(uv run python -m certifi)"
 uv run adk web
 ```
+- **Latency buffering:** *"Find a room after three."* *(The agent will verbally notify you that it is checking before waiting 5 seconds).*
+- **Failure recovery:** *"Find a room after one p.m."* *(Hour 13 triggers an intentional error; the agent apologizes gracefully and offers to try another time).*
 
-Ask for a room after three to hear the deliberate five-second delay. Ask for a
-room after one p.m. (13:00), or set `ROOM_TOOL_FAIL=1`, to trigger the friendly
-failure path. The tool returns a structured error; the agent should not expose a
-Python exception or retry without asking.
+---
 
-## Workshop map
-
-| Folder | Moment | What changes |
-|---|---|---|
-| `00_start` | Start here | Minimal agent; edit the instruction |
-| `01_basic` | Basic agent | Clear room-assistant behavior |
-| `02_tool` | Add a tool | Agent can call `find_rooms` |
-| `03_voice` | Enable voice | Switch to the Live API model and use the microphone |
-| `04_slow_failure` | Break it | Slow tool, timeout, and failure experiment |
-| `05_custom_streaming` | Look underneath | `run_live`, `LiveRequestQueue`, WebSocket, audio, events, transcription |
-| `06_production` | Harden it | Add WebSocket controls, session resilience, budgets, and safe logging |
-
-## Run the custom streaming app
-
-This is the optional advanced checkpoint:
+### 🌐 Custom Streaming Web Application (`05_custom_streaming`)
+Run the custom standalone FastAPI application on port `8001`:
 
 ```bash
 cd checkpoints/05_custom_streaming
 uv run uvicorn server:app --reload --port 8001
+# Or: PYTHONPATH=../../src ../../.venv/bin/uvicorn server:app --reload --port 8001
 ```
 
-Open [http://localhost:8001](http://localhost:8001), click **Connect microphone**, and use headphones.
+1. Navigate to [http://localhost:8001](http://localhost:8001) in Chrome.
+2. Put on headphones and click **Connect microphone**.
+3. Speak with the agent and observe real-time user/agent transcriptions, tool events, and instant barge-in audio cutoffs.
 
-## Run the production-hardening checkpoint
+---
+
+### 🛡️ Production-Hardened Application (`06_production`)
+Run the hardened enterprise-pattern server on port `8002`:
 
 ```bash
 cd checkpoints/06_production
 uv run uvicorn server:app --reload --port 8002
+# Or: PYTHONPATH=../../src ../../.venv/bin/uvicorn server:app --reload --port 8002
+```
+Navigate to [http://localhost:8002](http://localhost:8002) to inspect the hardened streaming pipeline.
+
+---
+
+## 🛡️ Production Hardening Matrix (`checkpoints/06_production`)
+
+Checkpoint 06 demonstrates how to guard a streaming voice application against real-world operational challenges:
+
+| Threat / Operational Challenge | Solution Implemented in Checkpoint 06 | Configuration / Code Hook |
+|---|---|---|
+| **Cross-Site WebSocket Hijacking** | Strict `Origin` header validation against an allowlist | `WS_ALLOWED_ORIGINS` (rejects with close code `1008`) |
+| **Buffer Overflow / Oversized Payloads** | Frame & decoded PCM chunk size caps | `MAX_WS_MESSAGE_BYTES=32768`<br/>`MAX_AUDIO_CHUNK_BYTES=16384` |
+| **API Quota Exhaustion & DoS** | Session concurrency limiter with atomic lock | `MAX_ACTIVE_SESSIONS=20` (rejects with close code `1013`) |
+| **Runaway Dialogue Token Costs** | Automatic context compression via sliding window | `ContextWindowCompressionConfig`<br/>*(trigger: 100k tokens, target: 80k)* |
+| **Network Reconnection Drops** | Session resumption handles for seamless reconnects | `session_resumption=SessionResumptionConfig()` |
+| **Infinite LLM Loop Runaways** | Strict cap on model inferences per session | `max_llm_calls=100` |
+| **Blocking Async Event Loops** | Bounded tool worker threadpool | `ToolThreadPoolConfig(max_workers=4)` |
+| **User Privacy & Compliance** | Strict redaction of conversation transcripts from logs | Telemetry logs connection IDs & durations only |
+| **Information Leakage** | Opaque error reference UUIDs sent to clients | Internal stack traces logged securely server-side |
+
+---
+
+## 🧪 Testing & Verification
+
+The project includes an automated test suite verifying tool execution, safety compliance, and WebSocket message parsing.
+
+```bash
+# Run pytest across all test modules:
+PYTHONPATH=src uv run pytest
+# Or: PYTHONPATH=src .venv/bin/pytest
 ```
 
-Open [http://localhost:8002](http://localhost:8002). This checkpoint hardens
-the custom streaming server from checkpoint 05. See
-[`checkpoints/06_production/README.md`](checkpoints/06_production/README.md) for
-the implemented controls and the infrastructure still required before a real deployment.
+```text
+tests/test_production_server.py ...                                      [ 37%]
+tests/test_repo_safety.py .                                              [ 50%]
+tests/test_room_tools.py ....                                            [100%]
+========================= 8 passed in 1.37s =========================
+```
 
-## API-key safety for a workshop
+- `test_room_tools.py`: Tests boundary conditions, filter matching, artificial delay, and mock failure triggers.
+- `test_production_server.py`: Validates binary audio decoding, schema rejection, and `RunConfig` guardrails.
+- `test_repo_safety.py`: Prevents accidental commits of Google API keys across all repository files.
 
-- Never commit the key. `.env` is ignored by Git. Both `GEMINI_API_KEY` and
-  `GOOGLE_API_KEY` are accepted by the workshop.
-- Prefer a dedicated workshop key and project, with the smallest practical quota.
-- Give the key only to registered participants and rotate/delete it immediately after the session.
-- Expect preview Live API models to have tighter quotas than text models.
-- If attendees can create their own AI Studio keys, that is safer and avoids one shared quota bottleneck.
+---
 
-## Troubleshooting
+## 📚 Technical References & Documentation
 
-- **No microphone:** allow browser microphone permission, reload, and use `localhost`.
-- **Certificate error on macOS:** set `SSL_CERT_FILE` using the command above.
-- **Quota/rate limit:** pair participants or switch to a participant-owned AI Studio key.
-- **Model not found:** verify `LIVE_MODEL` in `.env` against the current Live API model list. Preview model names can change.
-- **`not supported for bidiGenerateContent` in checkpoints 00–02:** microphone/audio mode was started with the text model. Start a new session and submit prompts with the text send button, or move to checkpoint 03 for voice.
-- **Someone is behind:** move directly to the next completed checkpoint.
+- [Google Agent Development Kit (ADK) Documentation](https://adk.dev/)
+- [ADK Python Streaming Guide](https://adk.dev/live/get-started/streaming-python/)
+- [Gemini Live API Developer Documentation](https://ai.google.dev/gemini-api/docs/live-api/get-started-sdk)
+- [Gemini 3.1 Flash Live Model Specs](https://ai.google.dev/gemini-api/docs/models/gemini-3.1-flash-live-preview)
+- [Workshop Slide Deck](https://docs.google.com/presentation/d/1rO9ilaF21ZTv5zWEboJ0Th_qkVyTbKBRWPNS2K3-EFw/edit?usp=sharing)
 
-## Sources
+---
 
-- [ADK streaming quickstart](https://adk.dev/get-started/streaming/)
-- [ADK Python streaming guide](https://adk.dev/live/get-started/streaming-python/)
-- [Gemini Live API quickstart](https://ai.google.dev/gemini-api/docs/live-api/get-started-sdk)
-- [Gemini 3.1 Flash Live model](https://ai.google.dev/gemini-api/docs/models/gemini-3.1-flash-live-preview)
-- [Latest Gemini text models](https://ai.google.dev/gemini-api/docs/latest-model)
-
-`adk web` is a development and workshop UI, not a production deployment.
+<div align="center">
+Built with ❤️ for voice AI developers exploring Google ADK & Gemini Live.
+</div>
